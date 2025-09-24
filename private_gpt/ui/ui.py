@@ -38,14 +38,16 @@ SOURCES_SEPARATOR = "<hr>Sources: \n"
 
 
 class Modes(str, Enum):
-    RAG_MODE = "RAG"
+    DENSE_RAG_MODE = "Dense RAG"
+    SPARSE_RAG_MODE = "Sparse RAG"
     SEARCH_MODE = "Search"
     BASIC_CHAT_MODE = "Basic"
     SUMMARIZE_MODE = "Summarize"
 
 
 MODES: list[Modes] = [
-    Modes.RAG_MODE,
+    Modes.DENSE_RAG_MODE,
+    Modes.SPARSE_RAG_MODE,
     Modes.SEARCH_MODE,
     Modes.BASIC_CHAT_MODE,
     Modes.SUMMARIZE_MODE,
@@ -102,7 +104,7 @@ class PrivateGptUi:
         # Initialize system prompt based on default mode
         default_mode_map = {mode.value: mode for mode in Modes}
         self._default_mode = default_mode_map.get(
-            settings().ui.default_mode, Modes.RAG_MODE
+            settings().ui.default_mode, Modes.DENSE_RAG_MODE
         )
         self._system_prompt = self._get_default_system_prompt(self._default_mode)
 
@@ -173,8 +175,27 @@ class PrivateGptUi:
                 ),
             )
         match mode:
-            case Modes.RAG_MODE:
+            case Modes.DENSE_RAG_MODE:
                 # Use only the selected file for the query
+                context_filter = None
+                if self._selected_filename is not None:
+                    docs_ids = []
+                    for ingested_document in self._ingest_service.list_ingested():
+                        if (
+                            ingested_document.doc_metadata["file_name"]
+                            == self._selected_filename
+                        ):
+                            docs_ids.append(ingested_document.doc_id)
+                    context_filter = ContextFilter(docs_ids=docs_ids)
+
+                query_stream = self._chat_service.stream_chat(
+                    messages=all_messages,
+                    use_context=True,
+                    context_filter=context_filter,
+                )
+                yield from yield_deltas(query_stream)
+            case Modes.SPARSE_RAG_MODE:
+                # Sparse RAG implementation - similar to dense but with different processing
                 context_filter = None
                 if self._selected_filename is not None:
                     docs_ids = []
@@ -239,7 +260,10 @@ class PrivateGptUi:
         p = ""
         match mode:
             # For query chat mode, obtain default system prompt from settings
-            case Modes.RAG_MODE:
+            case Modes.DENSE_RAG_MODE:
+                p = settings().ui.default_query_system_prompt
+            # For sparse RAG mode, use same default as dense RAG
+            case Modes.SPARSE_RAG_MODE:
                 p = settings().ui.default_query_system_prompt
             # For chat mode, obtain default system prompt from settings
             case Modes.BASIC_CHAT_MODE:
@@ -255,8 +279,10 @@ class PrivateGptUi:
     @staticmethod
     def _get_default_mode_explanation(mode: Modes) -> str:
         match mode:
-            case Modes.RAG_MODE:
+            case Modes.DENSE_RAG_MODE:
                 return "Get contextualized answers from selected files."
+            case Modes.SPARSE_RAG_MODE:
+                return "Get sparse contextualized answers from selected files."
             case Modes.SEARCH_MODE:
                 return "Find relevant chunks of text in selected files."
             case Modes.BASIC_CHAT_MODE:
@@ -273,14 +299,31 @@ class PrivateGptUi:
     def _set_explanatation_mode(self, explanation_mode: str) -> None:
         self._explanation_mode = explanation_mode
 
+    def _dense_rag_extra_action(self) -> str:
+        """Handler for the Dense RAG extra button click.
+        
+        This method will be called when the Dense RAG extra button is clicked.
+        You can customize this method to perform any specific action you need.
+        
+        Returns:
+            str: A message to display to the user (optional)
+        """
+        logger.info("Dense RAG extra button clicked!")
+        # Add your custom functionality here
+        # For example: enable advanced settings, trigger special processing, etc.
+        return "Dense RAG enhanced mode activated! 🚀"
+
     def _set_current_mode(self, mode: Modes) -> Any:
         self.mode = mode
         self._set_system_prompt(self._get_default_system_prompt(mode))
         self._set_explanatation_mode(self._get_default_mode_explanation(mode))
         interactive = self._system_prompt is not None
+        # Show the dense RAG extra button only when Dense RAG mode is selected
+        show_dense_rag_button = mode == Modes.DENSE_RAG_MODE.value
         return [
             gr.update(placeholder=self._system_prompt, interactive=interactive),
             gr.update(value=self._explanation_mode),
+            gr.update(visible=show_dense_rag_button),
         ]
 
     def _list_ingested_files(self) -> list[list[str]]:
@@ -387,7 +430,8 @@ class PrivateGptUi:
             ".footer { text-align: center; margin-top: 20px; font-size: 14px; display: flex; align-items: center; justify-content: center; }"
             ".footer-zylon-link { display:flex; margin-left: 5px; text-decoration: auto; color: var(--body-text-color); }"
             ".footer-zylon-link:hover { color: #C7BAFF; }"
-            ".footer-zylon-ico { height: 20px; margin-left: 5px; background-color: antiquewhite; border-radius: 2px; }",
+            ".footer-zylon-ico { height: 20px; margin-left: 5px; background-color: antiquewhite; border-radius: 2px; }"
+            ".dense-rag-btn { height: 32px !important; padding: 4px 8px !important; font-size: 12px !important; margin-top: 25px !important; }",
         ) as blocks:
             with gr.Row():
                 gr.HTML(f"<div class='logo'/><img src={logo_svg} alt=PrivateGPT></div")
@@ -395,11 +439,22 @@ class PrivateGptUi:
             with gr.Row(equal_height=False):
                 with gr.Column(scale=3):
                     default_mode = self._default_mode
-                    mode = gr.Radio(
-                        [mode.value for mode in MODES],
-                        label="Mode",
-                        value=default_mode,
-                    )
+                    with gr.Row():
+                        with gr.Column(scale=4):
+                            mode = gr.Radio(
+                                [mode.value for mode in MODES],
+                                label="Mode",
+                                value=default_mode,
+                            )
+                        with gr.Column(scale=1, min_width=120):
+                            # Custom button for Dense RAG mode - positioned next to mode selection
+                            dense_rag_extra_button = gr.components.Button(
+                                "🔍 Enhanced",
+                                size="sm",
+                                visible=default_mode == Modes.DENSE_RAG_MODE.value,
+                                variant="secondary",
+                                elem_classes="dense-rag-btn"
+                            )
                     explanation_mode = gr.Textbox(
                         placeholder=self._get_default_mode_explanation(default_mode),
                         show_label=False,
@@ -492,12 +547,18 @@ class PrivateGptUi:
                     mode.change(
                         self._set_current_mode,
                         inputs=mode,
-                        outputs=[system_prompt_input, explanation_mode],
+                        outputs=[system_prompt_input, explanation_mode, dense_rag_extra_button],
                     )
                     # On blur, set system prompt to use in queries
                     system_prompt_input.blur(
                         self._set_system_prompt,
                         inputs=system_prompt_input,
+                    )
+                    
+                    # Wire up the Dense RAG extra button
+                    dense_rag_extra_button.click(
+                        self._dense_rag_extra_action,
+                        outputs=None,  # Could add a status message output if needed
                     )
 
                     def get_model_label() -> str | None:
