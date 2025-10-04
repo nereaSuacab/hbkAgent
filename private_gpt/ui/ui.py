@@ -25,6 +25,8 @@ from private_gpt.server.ingest.ingest_service import IngestService
 from private_gpt.server.recipes.summarize.summarize_service import SummarizeService
 from private_gpt.settings.settings import settings
 from private_gpt.ui.images import logo_svg
+from private_gpt.components.retrievers.bm25_retriever import BM25Retriever
+
 
 logger = logging.getLogger(__name__)
 
@@ -195,18 +197,19 @@ class PrivateGptUi:
                 )
                 yield from yield_deltas(query_stream)
             case Modes.SPARSE_RAG_MODE:
-                # Sparse RAG implementation - similar to dense but with different processing
+                # Sparse RAG implementation - TODO: change bm25
                 context_filter = None
-                if self._selected_filename is not None:
-                    docs_ids = []
-                    for ingested_document in self._ingest_service.list_ingested():
-                        if (
-                            ingested_document.doc_metadata["file_name"]
-                            == self._selected_filename
-                        ):
-                            docs_ids.append(ingested_document.doc_id)
-                    context_filter = ContextFilter(docs_ids=docs_ids)
-
+                ingested_docs = list(self._ingest_service.list_ingested())
+                
+                if ingested_docs:
+                    # Inicializar BM25
+                    retriever = BM25Retriever(ingested_docs)
+                    # Tomar la última consulta del usuario
+                    query = all_messages[-1]["content"]
+                    docs_ids = retriever.get_top_docs(query, top_k=5)
+                    if docs_ids:
+                        context_filter = ContextFilter(docs_ids=docs_ids)
+                
                 query_stream = self._chat_service.stream_chat(
                     messages=all_messages,
                     use_context=True,
@@ -282,7 +285,7 @@ class PrivateGptUi:
             case Modes.DENSE_RAG_MODE:
                 return "Get contextualized answers from selected files."
             case Modes.SPARSE_RAG_MODE:
-                return "Get sparse contextualized answers from selected files."
+                return "Get sparse contextualized answers from selected files (bm25)."
             case Modes.SEARCH_MODE:
                 return "Find relevant chunks of text in selected files."
             case Modes.BASIC_CHAT_MODE:
