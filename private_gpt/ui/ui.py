@@ -27,6 +27,10 @@ from private_gpt.settings.settings import settings
 from private_gpt.ui.images import logo_svg
 from private_gpt.components.retrievers.bm25_retriever import BM25Retriever
 
+from private_gpt.components.sparse_store.sparse_store_component import (
+    SparseStoreComponent,
+)
+
 
 logger = logging.getLogger(__name__)
 
@@ -92,11 +96,13 @@ class PrivateGptUi:
         chat_service: ChatService,
         chunks_service: ChunksService,
         summarizeService: SummarizeService,
+        sparse_store_component: SparseStoreComponent,
     ) -> None:
         self._ingest_service = ingest_service
         self._chat_service = chat_service
         self._chunks_service = chunks_service
         self._summarize_service = summarizeService
+        self._sparse_store_component = sparse_store_component
 
         # Cache the UI blocks
         self._ui_block = None
@@ -197,24 +203,27 @@ class PrivateGptUi:
                 )
                 yield from yield_deltas(query_stream)
             case Modes.SPARSE_RAG_MODE:
-                # Sparse RAG implementation - TODO: change bm25
+                # Use only the selected file for the query (optional filtering)
                 context_filter = None
-                ingested_docs = list(self._ingest_service.list_ingested())
-                
-                if ingested_docs:
-                    # Inicializar BM25
-                    retriever = BM25Retriever(ingested_docs)
-                    # Tomar la última consulta del usuario
-                    query = all_messages[-1]["content"]
-                    docs_ids = retriever.get_top_docs(query, top_k=5)
-                    if docs_ids:
-                        context_filter = ContextFilter(docs_ids=docs_ids)
-                
+                if self._selected_filename is not None:
+                    docs_ids = []
+                    for ingested_document in self._ingest_service.list_ingested():
+                        if (
+                            ingested_document.doc_metadata["file_name"]
+                            == self._selected_filename
+                        ):
+                            docs_ids.append(ingested_document.doc_id)
+                    context_filter = ContextFilter(docs_ids=docs_ids)
+
+                # Stream chat using the BM25 (sparse) retriever
                 query_stream = self._chat_service.stream_chat(
                     messages=all_messages,
                     use_context=True,
                     context_filter=context_filter,
+                    retriever_type="bm25",  # key addition
                 )
+
+                # Yield incremental response tokens
                 yield from yield_deltas(query_stream)
             case Modes.BASIC_CHAT_MODE:
                 llm_stream = self._chat_service.stream_chat(
@@ -341,9 +350,14 @@ class PrivateGptUi:
             files.add(file_name)
         return [[row] for row in files]
 
+    def get_paths(files):
+        paths = [Path(file) for file in files]
+        return paths
+
     def _upload_file(self, files: list[str]) -> None:
         logger.debug("Loading count=%s files", len(files))
         paths = [Path(file) for file in files]
+        # paths = self.get_paths(files)
 
         # remove all existing Documents with name identical to a new file upload:
         file_names = [path.name for path in paths]
@@ -362,7 +376,35 @@ class PrivateGptUi:
             for doc_id in doc_ids_to_delete:
                 self._ingest_service.delete(doc_id)
 
-        self._ingest_service.bulk_ingest([(str(path.name), path) for path in paths])
+        # Ingest files
+        ingested_docs = self._ingest_service.bulk_ingest([(str(path.name), path) for path in paths])
+
+        # Extract text content for BM25
+        storage_context = self._ingest_service.storage_context
+        docstore = storage_context.docstore
+        ref_docs = docstore.get_all_ref_doc_info()
+
+        bm25_texts = []
+        bm25_doc_ids = []
+
+        for doc_id in ref_docs:
+            try:
+                # Get all nodes for this document
+                nodes = list(ref_docs[doc_id].node_ids)
+                for node_id in nodes:
+                    # Get the node from docstore.docs
+                    node = docstore.docs.get(node_id)
+
+                    if getattr(node, "text", None):
+                        bm25_texts.append(node.text)
+                        bm25_doc_ids.append(doc_id)
+            except Exception as e:
+                logger.warning(f"Could not load nodes for doc_id={doc_id}: {e}")
+    
+    def _update_bm25_index(self, docs: list[str]):
+        if not hasattr(self, "_sparse_index_service"):
+            self._sparse_index_service = SparseStoreComponent()
+        self._sparse_index_service.add_documents(docs)
 
     def _delete_all_files(self) -> Any:
         ingested_files = self._ingest_service.list_ingested()

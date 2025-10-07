@@ -1,17 +1,26 @@
-from rank_bm25 import BM25Okapi
+from llama_index.core.retrievers import BaseRetriever
+from llama_index.core.schema import NodeWithScore
+from llama_index.core.schema import QueryBundle
+import numpy as np
 
-class BM25Retriever:
-    def __init__(self, ingested_docs):
-        """
-        ingested_docs: lista de objetos ingested_document
-        Cada doc debe tener .doc_id y .text
-        """
-        self.docs = ingested_docs
-        self.corpus = [doc.text.split() for doc in ingested_docs]
-        self.bm25 = BM25Okapi(self.corpus)
+class BM25Retriever(BaseRetriever):
+    def __init__(self, bm25_index, nodes, top_k: int = 5):
+        self.bm25 = bm25_index
+        self.nodes = nodes
+        self.top_k = top_k
 
-    def get_top_docs(self, query: str, top_k: int = 5):
-        query_tokens = query.split()
+    def _retrieve(self, query_bundle: QueryBundle) -> list[NodeWithScore]:
+        query_text = query_bundle.query_str.lower()
+        query_tokens = query_text.split()
+
         scores = self.bm25.get_scores(query_tokens)
-        top_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:top_k]
-        return [self.docs[i].doc_id for i in top_indices]
+        top_k = min(self.top_k, len(scores))
+        top_idx = np.argsort(scores)[::-1][:top_k]
+
+        results = [
+            NodeWithScore(node=self.nodes[i], score=float(scores[i]))
+            for i in top_idx
+        ]
+        return results
+
+

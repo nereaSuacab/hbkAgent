@@ -31,6 +31,7 @@ class BaseIngestComponent(abc.ABC):
         storage_context: StorageContext,
         embed_model: EmbedType,
         transformations: list[TransformComponent],
+        sparse_store_component=None,
         *args: Any,
         **kwargs: Any,
     ) -> None:
@@ -38,6 +39,7 @@ class BaseIngestComponent(abc.ABC):
         self.storage_context = storage_context
         self.embed_model = embed_model
         self.transformations = transformations
+        self.sparse_store_component = sparse_store_component
 
     @abc.abstractmethod
     def ingest(self, file_name: str, file_data: Path) -> list[Document]:
@@ -58,10 +60,11 @@ class BaseIngestComponentWithIndex(BaseIngestComponent, abc.ABC):
         storage_context: StorageContext,
         embed_model: EmbedType,
         transformations: list[TransformComponent],
+        sparse_store_component=None,
         *args: Any,
         **kwargs: Any,
     ) -> None:
-        super().__init__(storage_context, embed_model, transformations, *args, **kwargs)
+        super().__init__(storage_context, embed_model, transformations, sparse_store_component, *args, **kwargs)
 
         self.show_progress = True
         self._index_thread_lock = (
@@ -104,6 +107,47 @@ class BaseIngestComponentWithIndex(BaseIngestComponent, abc.ABC):
 
             # Save the index
             self._save_index()
+    
+    def _ingest_to_sparse_store(self, nodes: list[BaseNode]) -> None:
+        """
+        Ingest nodes into the BM25 sparse store.
+        
+        Args:
+            nodes: List of nodes to ingest
+        """
+        if self.sparse_store_component is None:
+            return
+        
+        try:
+            # Extract text and doc_ids from nodes
+            texts = []
+            doc_ids = []
+            
+            for node in nodes:
+                # Get text content
+                if hasattr(node, 'text'):
+                    texts.append(node.text)
+                elif hasattr(node, 'get_content'):
+                    texts.append(node.get_content())
+                else:
+                    texts.append(str(node))
+                
+                # Get document ID
+                if hasattr(node, 'ref_doc_id'):
+                    doc_ids.append(node.ref_doc_id)
+                elif hasattr(node, 'node_id'):
+                    doc_ids.append(node.node_id)
+                elif hasattr(node, 'id_'):
+                    doc_ids.append(node.id_)
+                else:
+                    doc_ids.append(f"node_{len(doc_ids)}")
+            
+            # Ingest into BM25
+            if texts:
+                self.sparse_store_component.ingest(texts, doc_ids)
+                logger.info(f"Ingested {len(texts)} nodes into BM25 sparse store")
+        except Exception as e:
+            logger.error(f"Failed to ingest into BM25 sparse store: {e}") 
 
 
 class SimpleIngestComponent(BaseIngestComponentWithIndex):
@@ -138,11 +182,18 @@ class SimpleIngestComponent(BaseIngestComponentWithIndex):
     def _save_docs(self, documents: list[Document]) -> list[Document]:
         logger.debug("Transforming count=%s documents into nodes", len(documents))
         with self._index_thread_lock:
+            nodes = []
             for document in documents:
-                self._index.insert(document, show_progress=True)
+                inserted_nodes = self._index.insert(document, show_progress=True)
+                if inserted_nodes:
+                    nodes.extend(inserted_nodes)
+    
             logger.debug("Persisting the index and nodes")
-            # persist the index and nodes
             self._save_index()
+
+            if nodes:
+                self._ingest_to_sparse_store(nodes)
+
             logger.debug("Persisted the index and nodes")
         return documents
 
@@ -217,6 +268,9 @@ class BatchIngestComponent(BaseIngestComponentWithIndex):
             logger.debug("Persisting the index and nodes")
             # persist the index and nodes
             self._save_index()
+
+            self._ingest_to_sparse_store(nodes)
+
             logger.debug("Persisted the index and nodes")
         return documents
 
@@ -299,6 +353,9 @@ class ParallelizedIngestComponent(BaseIngestComponentWithIndex):
             logger.debug("Persisting the index and nodes")
             # persist the index and nodes
             self._save_index()
+
+            self._ingest_to_sparse_store(nodes)
+
             logger.debug("Persisted the index and nodes")
         return documents
 
@@ -421,6 +478,9 @@ class PipelineIngestComponent(BaseIngestComponentWithIndex):
                     document.get_doc_id(), document.hash
                 )
             self._save_index()
+
+            self._ingest_to_sparse_store(nodes)
+
         except Exception:
             # Tell the user so they can investigate these files
             logger.exception(f"Processing files {files}")
@@ -485,33 +545,32 @@ def get_ingestion_component(
     embed_model: EmbedType,
     transformations: list[TransformComponent],
     settings: Settings,
+    sparse_store_component=None,
 ) -> BaseIngestComponent:
     """Get the ingestion component for the given configuration."""
     ingest_mode = settings.embedding.ingest_mode
+
+    common_args = {
+        "storage_context": storage_context,
+        "embed_model": embed_model,
+        "transformations": transformations,
+        "sparse_store_component": sparse_store_component,  # ADD THIS
+    }
+    
     if ingest_mode == "batch":
         return BatchIngestComponent(
-            storage_context=storage_context,
-            embed_model=embed_model,
-            transformations=transformations,
+            **common_args,
             count_workers=settings.embedding.count_workers,
         )
     elif ingest_mode == "parallel":
         return ParallelizedIngestComponent(
-            storage_context=storage_context,
-            embed_model=embed_model,
-            transformations=transformations,
+            **common_args,
             count_workers=settings.embedding.count_workers,
         )
     elif ingest_mode == "pipeline":
         return PipelineIngestComponent(
-            storage_context=storage_context,
-            embed_model=embed_model,
-            transformations=transformations,
+            **common_args,
             count_workers=settings.embedding.count_workers,
         )
     else:
-        return SimpleIngestComponent(
-            storage_context=storage_context,
-            embed_model=embed_model,
-            transformations=transformations,
-        )
+        return SimpleIngestComponent(**common_args)
