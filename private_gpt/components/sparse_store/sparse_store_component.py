@@ -112,9 +112,10 @@ class SparseStoreComponent:
         self.tokenized_corpus = [doc.lower().split() for doc in documents]
         logger.info(f"Tokenized {len(self.tokenized_corpus)} documents")
         
+        # TODO: ERROR HERE!! index has no attribute fit
         # Build BM25 index - CRITICAL: Must call both fit() and index()
-        logger.info("Fitting BM25 index...")
-        self.index.fit(self.tokenized_corpus)
+        # logger.info("Fitting BM25 index...")
+        # self.index.fit(self.tokenized_corpus)
         
         logger.info("Indexing BM25 corpus...")
         self.index.index(self.tokenized_corpus)  # This creates vocab_dict
