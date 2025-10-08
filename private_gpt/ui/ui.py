@@ -403,18 +403,10 @@ class PrivateGptUi:
         
         # Update BM25 index
         if bm25_texts:
-            self._update_bm25_index(bm25_texts, bm25_doc_ids)
+            self._sparse_store_component.ingest(bm25_texts, bm25_doc_ids)
         else:
             logger.warning("No text extracted for BM25 update.")
     
-    def _update_bm25_index(self, docs: list[str], doc_ids: list[str]):
-        if not hasattr(self, "_sparse_index_service"):
-            self._sparse_index_service = SparseStoreComponent(
-                storage_context=self._ingest_service.storage_context
-            )
-
-        self._sparse_index_service.ingest(docs, doc_ids)
-
     def _delete_all_files(self) -> Any:
         ingested_files = self._ingest_service.list_ingested()
         logger.debug("Deleting count=%s files", len(ingested_files))

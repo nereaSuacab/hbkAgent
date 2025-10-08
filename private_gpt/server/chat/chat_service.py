@@ -1,3 +1,4 @@
+from asyncio.log import logger
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -128,6 +129,7 @@ class ChatService:
                     similarity_top_k=settings.rag.similarity_top_k,
                 )
             elif retriever_type == "bm25":
+                logger.info(f"get_retriever called - Instance ID: {id(self)}")
                 retriever = self.sparse_store_component.get_retriever(
                     context_filter=context_filter,
                     top_k=settings.rag.similarity_top_k,

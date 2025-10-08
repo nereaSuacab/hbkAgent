@@ -1,4 +1,6 @@
+import traceback
 from bm25s import BM25
+from injector import singleton
 import numpy as np
 from llama_index.core.schema import NodeWithScore
 from private_gpt.components.retrievers.bm25_retriever import BM25Retriever
@@ -6,7 +8,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-
+@singleton
 class SparseStoreComponent:
     def __init__(self, storage_context=None):
         """
@@ -22,6 +24,11 @@ class SparseStoreComponent:
         self._is_indexed = False
         self._storage_context = storage_context
         self._backfill_attempted = False
+
+        # Log when instance is created and WHERE it was created
+        instance_id = id(self)
+        logger.info(f"NEW SparseStoreComponent instance created - ID: {instance_id}")
+        logger.info(f"Creation stack trace:\n{''.join(traceback.format_stack())}")
 
     def _auto_backfill_from_storage(self):
         """
@@ -112,7 +119,6 @@ class SparseStoreComponent:
         self.tokenized_corpus = [doc.lower().split() for doc in documents]
         logger.info(f"Tokenized {len(self.tokenized_corpus)} documents")
         
-        # TODO: ERROR HERE!! index has no attribute fit
         # Build BM25 index - CRITICAL: Must call both fit() and index()
         # logger.info("Fitting BM25 index...")
         # self.index.fit(self.tokenized_corpus)
