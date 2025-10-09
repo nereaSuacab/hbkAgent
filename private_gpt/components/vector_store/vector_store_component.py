@@ -10,6 +10,7 @@ from llama_index.core.vector_stores.types import (
     MetadataFilters,
 )
 
+from private_gpt.components.retrievers.vector_retriever import LoggingVectorIndexRetriever
 from private_gpt.open_ai.extensions.context_filter import ContextFilter
 from private_gpt.paths import local_data_path
 from private_gpt.settings.settings import Settings
@@ -199,9 +200,9 @@ class VectorStoreComponent:
         index: VectorStoreIndex,
         context_filter: ContextFilter | None = None,
         similarity_top_k: int = 2,
-    ) -> VectorIndexRetriever:
+    ) -> LoggingVectorIndexRetriever:  # Changed return type
         # This way we support qdrant (using doc_ids) and the rest (using filters)
-        return VectorIndexRetriever(
+        return LoggingVectorIndexRetriever(  # Changed class
             index=index,
             similarity_top_k=similarity_top_k,
             doc_ids=context_filter.docs_ids if context_filter else None,

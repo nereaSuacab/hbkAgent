@@ -200,18 +200,44 @@ class ChatService:
             message=last_message if last_message is not None else "",
             chat_history=chat_history,
         )
-        # sources = [Chunk.from_node(node) for node in streaming_response.source_nodes]
+        # Log the retrieved sources and their scores
+        
+        # Get retriever name if available
+        retriever_name = "Unknown"
+        if hasattr(chat_engine, '_retriever') and hasattr(chat_engine._retriever, 'retriever_name'):
+            retriever_name = chat_engine._retriever.retriever_name
 
-        sources = []  # create an empty list to store Chunk objects
-
+        logger.info(f"[{retriever_name}] Retrieved {len(streaming_response.source_nodes)} source nodes:")
+        for idx, node in enumerate(streaming_response.source_nodes, 1):
+            score = node.score if hasattr(node, 'score') else 'N/A'
+            preview = node.node.text[:100] if hasattr(node.node, 'text') else str(node.node)[:100]
+            logger.info(f"[{retriever_name}]   Source {idx}: Score={score:.4f}, Preview='{preview}...'")
+            
+        if hasattr(node.node, 'metadata'):
+            logger.info(f"[{retriever_name}]     Metadata: {node.node.metadata}")
+            
+        sources = []
         for node in streaming_response.source_nodes:
-            chunk = Chunk.from_node(node)  # convert each node to a Chunk
-            sources.append(chunk)          # add the Chunk to the list
+            chunk = Chunk.from_node(node)
+            sources.append(chunk)
 
         completion_gen = CompletionGen(
             response=streaming_response.response_gen, sources=sources
         )
         return completion_gen
+        
+        # # sources = [Chunk.from_node(node) for node in streaming_response.source_nodes]
+
+        # sources = []  # create an empty list to store Chunk objects
+
+        # for node in streaming_response.source_nodes:
+        #     chunk = Chunk.from_node(node)  # convert each node to a Chunk
+        #     sources.append(chunk)          # add the Chunk to the list
+
+        # completion_gen = CompletionGen(
+        #     response=streaming_response.response_gen, sources=sources
+        # )
+        # return completion_gen
 
     def chat(
         self,

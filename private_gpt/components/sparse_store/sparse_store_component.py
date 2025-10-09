@@ -26,9 +26,9 @@ class SparseStoreComponent:
         self._backfill_attempted = False
 
         # Log when instance is created and WHERE it was created
-        instance_id = id(self)
-        logger.info(f"NEW SparseStoreComponent instance created - ID: {instance_id}")
-        logger.info(f"Creation stack trace:\n{''.join(traceback.format_stack())}")
+        # instance_id = id(self)
+        # logger.info(f"NEW SparseStoreComponent instance created - ID: {instance_id}")
+        # logger.info(f"Creation stack trace:\n{''.join(traceback.format_stack())}")
 
     def _auto_backfill_from_storage(self):
         """
@@ -177,19 +177,19 @@ class SparseStoreComponent:
             )
         
         # If a context filter is provided, filter nodes to only include those doc_ids
-        if context_filter is not None:
-            from private_gpt.server.chat.chat_service import ContextFilter
-            filtered_nodes = [
-                node for node in self.nodes
-                if hasattr(node, 'ref_doc_id') and node.ref_doc_id in context_filter.docs_ids
-            ]
+        if context_filter:
+            filtered_nodes = []
+            for node, doc_id in zip(self.nodes, self.doc_ids):
+                if doc_id in context_filter.docs_ids:
+                    filtered_nodes.append(node)
             logger.info(f"Filtered to {len(filtered_nodes)} nodes based on context filter")
         else:
             filtered_nodes = self.nodes
             logger.info(f"Using all {len(filtered_nodes)} nodes (no context filter)")
 
         # Return the BM25Retriever with the filtered nodes
-        return BM25Retriever(self.index, filtered_nodes, top_k=top_k)
+        retriever = BM25Retriever(self.index, filtered_nodes, top_k=top_k)
+        return retriever
 
     def retrieve(self, query: str, top_k=5):
         """
