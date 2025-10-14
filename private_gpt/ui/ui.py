@@ -348,6 +348,37 @@ class PrivateGptUi:
                 "file_name", "[FILE NAME MISSING]"
             )
             files.add(file_name)
+
+        storage_context = self._ingest_service.storage_context
+        docstore = storage_context.docstore
+        ref_docs = docstore.get_all_ref_doc_info()
+
+        bm25_texts = []
+        bm25_doc_ids = []
+
+        for doc_id in ref_docs:
+            try:
+                # Get all nodes for this document
+                nodes = list(ref_docs[doc_id].node_ids)
+                for node_id in nodes:
+                    # Get the node from docstore.docs
+                    node = docstore.docs.get(node_id)
+
+                    if getattr(node, "text", None):
+                        bm25_texts.append(node.text)
+                        bm25_doc_ids.append(doc_id)
+            except Exception as e:
+                logger.warning(f"Could not load nodes for doc_id={doc_id}: {e}")
+        
+        # Update BM25 index
+        if bm25_texts and not getattr(self._sparse_store_component, "_is_indexed", False):
+            logger.info("BM25 index not found in memory — rebuilding from stored documents.")
+            self._sparse_store_component.ingest(bm25_texts, bm25_doc_ids)
+        elif bm25_texts:
+            logger.info("BM25 index already in memory — skipping rebuild.")
+        else:
+            logger.warning("No text found for BM25 index.")
+
         return [[row] for row in files]
 
     def get_paths(files):
