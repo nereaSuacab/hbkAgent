@@ -29,3 +29,6 @@ __pycache__/
 
 # macOS
 .DS_Store
+
+# data folders
+/data
