@@ -1,4 +1,5 @@
 import logging
+import time
 
 from injector import inject, singleton
 from llama_index.core.storage.docstore import BaseDocumentStore, SimpleDocumentStore
@@ -18,20 +19,29 @@ class NodeStoreComponent:
 
     @inject
     def __init__(self, settings: Settings) -> None:
+        logger.info("=== NodeStoreComponent initialization started ===")
+        overall_start = time.time()
+
         match settings.nodestore.database:
             case "simple":
                 try:
+                    logger.info("Loading index store from disk...")
+                    start = time.time()
                     self.index_store = SimpleIndexStore.from_persist_dir(
                         persist_dir=str(local_data_path)
                     )
+                    logger.info(f"Index store loaded in {time.time() - start:.2f}s")
                 except FileNotFoundError:
                     logger.debug("Local index store not found, creating a new one")
                     self.index_store = SimpleIndexStore()
 
                 try:
+                    logger.info("Loading document store from disk...")
+                    start = time.time()
                     self.doc_store = SimpleDocumentStore.from_persist_dir(
                         persist_dir=str(local_data_path)
                     )
+                    logger.info(f"Document store loaded in {time.time() - start:.2f}s")
                 except FileNotFoundError:
                     logger.debug("Local document store not found, creating a new one")
                     self.doc_store = SimpleDocumentStore()
@@ -66,3 +76,5 @@ class NodeStoreComponent:
                 raise ValueError(
                     f"Database {settings.nodestore.database} not supported"
                 )
+        
+        logger.info(f"=== NodeStoreComponent initialized in {time.time() - overall_start:.2f}s ===")

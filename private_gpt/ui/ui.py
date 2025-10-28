@@ -38,7 +38,7 @@ THIS_DIRECTORY_RELATIVE = Path(__file__).parent.relative_to(PROJECT_ROOT_PATH)
 # Should be "private_gpt/ui/avatar-bot.ico"
 AVATAR_BOT = THIS_DIRECTORY_RELATIVE / "avatar-bot.ico"
 
-UI_TAB_TITLE = "My Private GPT"
+UI_TAB_TITLE = "HBK Agent"
 
 SOURCES_SEPARATOR = "<hr>Sources: \n"
 
@@ -485,34 +485,31 @@ class PrivateGptUi:
 
     def _build_ui_blocks(self) -> gr.Blocks:
         logger.debug("Creating the UI blocks")
+
         with gr.Blocks(
             title=UI_TAB_TITLE,
             theme=gr.themes.Soft(primary_hue=slate),
-            css=".logo { "
-            "display:flex;"
-            "background-color: #C7BAFF;"
-            "height: 80px;"
-            "border-radius: 8px;"
-            "align-content: center;"
-            "justify-content: center;"
-            "align-items: center;"
-            "}"
-            ".logo img { height: 25% }"
-            ".contain { display: flex !important; flex-direction: column !important; }"
-            "#component-0, #component-3, #component-10, #component-8  { height: 100% !important; }"
-            "#chatbot { flex-grow: 1 !important; overflow: auto !important;}"
-            "#col { height: calc(100vh - 112px - 16px) !important; }"
-            "hr { margin-top: 1em; margin-bottom: 1em; border: 0; border-top: 1px solid #FFF; }"
-            ".avatar-image { background-color: antiquewhite; border-radius: 2px; }"
-            ".footer { text-align: center; margin-top: 20px; font-size: 14px; display: flex; align-items: center; justify-content: center; }"
-            ".footer-zylon-link { display:flex; margin-left: 5px; text-decoration: auto; color: var(--body-text-color); }"
-            ".footer-zylon-link:hover { color: #C7BAFF; }"
-            ".footer-zylon-ico { height: 20px; margin-left: 5px; background-color: antiquewhite; border-radius: 2px; }"
-            ".dense-rag-btn { height: 32px !important; padding: 4px 8px !important; font-size: 12px !important; margin-top: 25px !important; }",
+            css="""
+                .header-container {
+                    background-color: #C4DAFA !important;
+                    padding: 20px !important;
+                    border-radius: 8px !important;
+                    text-align: center !important;
+                    margin-bottom: 20px !important;
+                }
+            """,
         ) as blocks:
-            with gr.Row():
-                gr.HTML(f"<div class='logo'/><img src={logo_svg} alt=PrivateGPT></div")
-
+            with gr.Row(elem_classes="header-container"):
+                with gr.Column(scale=1):
+                    gr.Image(
+                        "private_gpt/ui/header.png",
+                        show_label=False,
+                        container=False,
+                        height=60,
+                        show_download_button=False,
+                        show_share_button=False
+                    )
+                gr.Markdown("# HBK Agent", elem_classes="header-title")
             with gr.Row(equal_height=False):
                 with gr.Column(scale=3):
                     default_mode = self._default_mode
@@ -538,12 +535,12 @@ class PrivateGptUi:
                         max_lines=3,
                         interactive=False,
                     )
-                    upload_button = gr.components.UploadButton(
-                        "Upload File(s)",
-                        type="filepath",
-                        file_count="multiple",
-                        size="sm",
-                    )
+                    # upload_button = gr.components.UploadButton(
+                    #     "Upload File(s)",
+                    #     type="filepath",
+                    #     file_count="multiple",
+                    #     size="sm",
+                    # )
                     ingested_dataset = gr.List(
                         self._list_ingested_files,
                         headers=["File name"],
@@ -552,15 +549,15 @@ class PrivateGptUi:
                         interactive=False,
                         render=False,  # Rendered under the button
                     )
-                    upload_button.upload(
-                        self._upload_file,
-                        inputs=upload_button,
-                        outputs=ingested_dataset,
-                    )
-                    ingested_dataset.change(
-                        self._list_ingested_files,
-                        outputs=ingested_dataset,
-                    )
+                    # upload_button.upload(
+                    #     self._upload_file,
+                    #     inputs=upload_button,
+                    #     outputs=ingested_dataset,
+                    # )
+                    # ingested_dataset.change(
+                    #     self._list_ingested_files,
+                    #     outputs=ingested_dataset,
+                    # )
                     ingested_dataset.render()
                     deselect_file_button = gr.components.Button(
                         "De-select selected file", size="sm", interactive=False
@@ -696,7 +693,8 @@ class PrivateGptUi:
                                 AVATAR_BOT,
                             ),
                         ),
-                        additional_inputs=[mode, upload_button, system_prompt_input],
+                        # additional_inputs=[mode, upload_button, system_prompt_input],
+                        additional_inputs=[mode, system_prompt_input],
                     )
 
             with gr.Row():

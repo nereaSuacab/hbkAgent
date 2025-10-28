@@ -1,4 +1,5 @@
 import logging
+import time
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, AnyStr, BinaryIO
@@ -33,20 +34,33 @@ class IngestService:
         embedding_component: EmbeddingComponent,
         node_store_component: NodeStoreComponent,
     ) -> None:
+        logger.info("=== IngestService initialization started ===")
+        overall_start = time.time()
+
         self.llm_service = llm_component
+
+        logger.info("Creating storage context...")
+        start = time.time()
         self.storage_context = StorageContext.from_defaults(
             vector_store=vector_store_component.vector_store,
             docstore=node_store_component.doc_store,
             index_store=node_store_component.index_store,
         )
+        logger.info(f"Storage context created in {time.time() - start:.2f}s")
+        
         node_parser = SentenceWindowNodeParser.from_defaults()
 
+        logger.info("Getting ingestion component...")
+        start = time.time()
         self.ingest_component = get_ingestion_component(
             self.storage_context,
             embed_model=embedding_component.embedding_model,
             transformations=[node_parser, embedding_component.embedding_model],
             settings=settings(),
         )
+        logger.info(f"Ingestion component initialized in {time.time() - start:.2f}s")
+        
+        logger.info(f"=== IngestService initialized in {time.time() - overall_start:.2f}s ===")
 
     def _ingest_data(self, file_name: str, file_data: AnyStr) -> list[IngestedDoc]:
         logger.debug("Got file data of size=%s to ingest", len(file_data))
