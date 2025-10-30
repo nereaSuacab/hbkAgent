@@ -19,18 +19,18 @@ class NodeStoreComponent:
 
     @inject
     def __init__(self, settings: Settings) -> None:
-        logger.info("=== NodeStoreComponent initialization started ===")
+        # logger.info("=== NodeStoreComponent initialization started ===")
         overall_start = time.time()
 
         match settings.nodestore.database:
             case "simple":
                 try:
-                    logger.info("Loading index store from disk...")
+                    # logger.info("Loading index store from disk...")
                     start = time.time()
                     self.index_store = SimpleIndexStore.from_persist_dir(
                         persist_dir=str(local_data_path)
                     )
-                    logger.info(f"Index store loaded in {time.time() - start:.2f}s")
+                    #logger.info(f"Index store loaded in {time.time() - start:.2f}s")
                 except FileNotFoundError:
                     logger.debug("Local index store not found, creating a new one")
                     self.index_store = SimpleIndexStore()
@@ -41,7 +41,7 @@ class NodeStoreComponent:
                     self.doc_store = SimpleDocumentStore.from_persist_dir(
                         persist_dir=str(local_data_path)
                     )
-                    logger.info(f"Document store loaded in {time.time() - start:.2f}s")
+                    # logger.info(f"Document store loaded in {time.time() - start:.2f}s")
                 except FileNotFoundError:
                     logger.debug("Local document store not found, creating a new one")
                     self.doc_store = SimpleDocumentStore()

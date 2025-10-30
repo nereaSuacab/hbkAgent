@@ -34,23 +34,23 @@ class IngestService:
         embedding_component: EmbeddingComponent,
         node_store_component: NodeStoreComponent,
     ) -> None:
-        logger.info("=== IngestService initialization started ===")
+        # logger.info("=== IngestService initialization started ===")
         overall_start = time.time()
 
         self.llm_service = llm_component
 
-        logger.info("Creating storage context...")
+        # logger.info("Creating storage context...")
         start = time.time()
         self.storage_context = StorageContext.from_defaults(
             vector_store=vector_store_component.vector_store,
             docstore=node_store_component.doc_store,
             index_store=node_store_component.index_store,
         )
-        logger.info(f"Storage context created in {time.time() - start:.2f}s")
+        # logger.info(f"Storage context created in {time.time() - start:.2f}s")
         
         node_parser = SentenceWindowNodeParser.from_defaults()
 
-        logger.info("Getting ingestion component...")
+        # logger.info("Getting ingestion component...")
         start = time.time()
         self.ingest_component = get_ingestion_component(
             self.storage_context,
@@ -58,9 +58,9 @@ class IngestService:
             transformations=[node_parser, embedding_component.embedding_model],
             settings=settings(),
         )
-        logger.info(f"Ingestion component initialized in {time.time() - start:.2f}s")
+        # logger.info(f"Ingestion component initialized in {time.time() - start:.2f}s")
         
-        logger.info(f"=== IngestService initialized in {time.time() - overall_start:.2f}s ===")
+        # logger.info(f"=== IngestService initialized in {time.time() - overall_start:.2f}s ===")
 
     def _ingest_data(self, file_name: str, file_data: AnyStr) -> list[IngestedDoc]:
         logger.debug("Got file data of size=%s to ingest", len(file_data))
@@ -80,7 +80,7 @@ class IngestService:
                 path_to_tmp.unlink()
 
     def ingest_file(self, file_name: str, file_data: Path) -> list[IngestedDoc]:
-        logger.info("Ingesting file_name=%s", file_name)
+        #logger.info("Ingesting file_name=%s", file_name)
         documents = self.ingest_component.ingest(file_name, file_data)
         logger.info("Finished ingestion file_name=%s", file_name)
         return [IngestedDoc.from_document(document) for document in documents]
@@ -97,7 +97,7 @@ class IngestService:
         return self._ingest_data(file_name, file_data)
 
     def bulk_ingest(self, files: list[tuple[str, Path]]) -> list[IngestedDoc]:
-        logger.info("Ingesting file_names=%s", [f[0] for f in files])
+        #logger.info("Ingesting file_names=%s", [f[0] for f in files])
         documents = self.ingest_component.bulk_ingest(files)
         logger.info("Finished ingestion file_name=%s", [f[0] for f in files])
         return [IngestedDoc.from_document(document) for document in documents]
