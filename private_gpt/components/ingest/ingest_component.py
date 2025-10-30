@@ -76,6 +76,7 @@ class BaseIngestComponentWithIndex(BaseIngestComponent, abc.ABC):
         """Initialize the index from the storage context."""
         try:
             # Load the index with store_nodes_override=True to be able to delete them
+            logger.info("EMPEZANDO INDEX LOAD")
             index = load_index_from_storage(
                 storage_context=self.storage_context,
                 store_nodes_override=True,  # Force store nodes in index and document stores
@@ -83,6 +84,7 @@ class BaseIngestComponentWithIndex(BaseIngestComponent, abc.ABC):
                 embed_model=self.embed_model,
                 transformations=self.transformations,
             )
+            logger.info("ACABANDO INDEX LOAD")
         except ValueError:
             # There are no index in the storage context, creating a new one
             logger.info("Creating a new vector store index")

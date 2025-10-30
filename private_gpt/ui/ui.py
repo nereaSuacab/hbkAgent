@@ -344,6 +344,7 @@ class PrivateGptUi:
             if ingested_document.doc_metadata is None:
                 # Skipping documents without metadata
                 continue
+            logger.info(f"Ingested document metadata: {ingested_document.doc_metadata}")
             file_name = ingested_document.doc_metadata.get(
                 "file_name", "[FILE NAME MISSING]"
             )
@@ -351,33 +352,9 @@ class PrivateGptUi:
 
         storage_context = self._ingest_service.storage_context
         docstore = storage_context.docstore
+        logger.info("Loading reference documents...")
         ref_docs = docstore.get_all_ref_doc_info()
-
-        bm25_texts = []
-        bm25_doc_ids = []
-
-        for doc_id in ref_docs:
-            try:
-                # Get all nodes for this document
-                nodes = list(ref_docs[doc_id].node_ids)
-                for node_id in nodes:
-                    # Get the node from docstore.docs
-                    node = docstore.docs.get(node_id)
-
-                    if getattr(node, "text", None):
-                        bm25_texts.append(node.text)
-                        bm25_doc_ids.append(doc_id)
-            except Exception as e:
-                logger.warning(f"Could not load nodes for doc_id={doc_id}: {e}")
-        
-        # Update BM25 index
-        if bm25_texts and not getattr(self._sparse_store_component, "_is_indexed", False):
-            logger.info("BM25 index not found in memory — rebuilding from stored documents.")
-            self._sparse_store_component.ingest(bm25_texts, bm25_doc_ids)
-        elif bm25_texts:
-            logger.info("BM25 index already in memory — skipping rebuild.")
-        else:
-            logger.warning("No text found for BM25 index.")
+        logger.info(f"Loaded {len(ref_docs)} reference documents.")
 
         return [[row] for row in files]
 
@@ -409,34 +386,6 @@ class PrivateGptUi:
 
         # Ingest files
         ingested_docs = self._ingest_service.bulk_ingest([(str(path.name), path) for path in paths])
-
-        # Extract text content for BM25
-        storage_context = self._ingest_service.storage_context
-        docstore = storage_context.docstore
-        ref_docs = docstore.get_all_ref_doc_info()
-
-        bm25_texts = []
-        bm25_doc_ids = []
-
-        for doc_id in ref_docs:
-            try:
-                # Get all nodes for this document
-                nodes = list(ref_docs[doc_id].node_ids)
-                for node_id in nodes:
-                    # Get the node from docstore.docs
-                    node = docstore.docs.get(node_id)
-
-                    if getattr(node, "text", None):
-                        bm25_texts.append(node.text)
-                        bm25_doc_ids.append(doc_id)
-            except Exception as e:
-                logger.warning(f"Could not load nodes for doc_id={doc_id}: {e}")
-        
-        # Update BM25 index
-        if bm25_texts:
-            self._sparse_store_component.ingest(bm25_texts, bm25_doc_ids)
-        else:
-            logger.warning("No text extracted for BM25 update.")
     
     def _delete_all_files(self) -> Any:
         ingested_files = self._ingest_service.list_ingested()
@@ -712,7 +661,9 @@ class PrivateGptUi:
         return self._ui_block
 
     def mount_in_app(self, app: FastAPI, path: str) -> None:
+        logger.info("Preparing to mount the gradio UI...")
         blocks = self.get_ui_blocks()
+        logger.info("UI blocks prepared, queuing...")
         blocks.queue()
         logger.info("Mounting the gradio UI, at path=%s", path)
         gr.mount_gradio_app(app, blocks, path=path, favicon_path=AVATAR_BOT)
