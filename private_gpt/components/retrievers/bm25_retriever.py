@@ -1,11 +1,14 @@
-from llama_index.retrievers.bm25 import BM25Retriever as LlamaBM25Retriever
+# from llama_index.retrievers.bm25 import BM25Retriever as LlamaBM25Retriever
 from llama_index.core.retrievers import BaseRetriever
-from llama_index.core.schema import NodeWithScore, QueryBundle, BaseNode
+from llama_index.core.schema import NodeWithScore, QueryBundle, BaseNode, TextNode
 from pathlib import Path
 import json
 import logging
 import re
 import unicodedata
+import bm25s
+import Stemmer
+from datetime import datetime
 
 
 logger = logging.getLogger(__name__)
@@ -15,140 +18,150 @@ RESULTS_FILE = Path("retrieval_results_sparse.json")
 
 class BM25Retriever(BaseRetriever):
     """
-    Wrapper around LlamaIndex's BM25Retriever that:
-      - uses official BM25 scoring
+    Wrapper around BM25 that:
+      - uses bm25s for official BM25 scoring
       - logs top results
       - saves each retrieval to a JSON file
     """
     def __init__(self, documents, top_k: int = 5):
+        """
+        BM25 retriever using bm25s, compatible with TextNode objects.
+        Indexes `original_text` but returns `window` + metadata.
+        """
         self.top_k = top_k
-        self.retriever_name = "BM25"
-        self.results_file = RESULTS_FILE
+        self.retriever_name = "BM25 (bm25s)"
+        self.stemmer = Stemmer.Stemmer("english")
 
-        # ✅ Convert documents to nodes if needed
-        nodes = []
+        corpus = []
+        self.doc_info = []  # to map back results to metadata
+
         for doc in documents:
-            if isinstance(doc, BaseNode):
-                nodes.append(doc)
-            else:
-                # If it's not already a node, it might be a Document
-                # Documents have a get_content() or text attribute
-                logger.warning(f"Document is not a BaseNode, type: {type(doc)}")
-                nodes.append(doc)
-        
-        logger.info(f"Preparing to initialize BM25Retriever with {len(nodes)} nodes")
+            # Get the full text for indexing
+            full_text = None
+            if hasattr(doc, "metadata"):
+                full_text = doc.metadata.get("original_text", None)
+            if not full_text and hasattr(doc, "text"):
+                full_text = doc.text
 
-        # ✅ Use from_defaults as shown in the available methods
-        self.retriever = LlamaBM25Retriever.from_defaults(
-            nodes=nodes,
-            similarity_top_k=top_k
-        )
-        logger.info(f"Successfully initialized BM25Retriever with {len(nodes)} nodes")
+            if not full_text:
+                logger.warning(f"No valid text found for node {doc.id_}, skipping.")
+                continue
+
+            corpus.append(full_text)
+
+            # Save node info for retrieval
+            self.doc_info.append({
+                "id": doc.id_,
+                "node": doc,  # ✅ Keep original node object
+                "window": doc.metadata.get("window", ""),
+                "original_text": full_text,
+                "metadata": doc.metadata,
+            })
+
+        # Tokenize and index
+        logger.info("Tokenizing corpus...")
+        corpus_tokens = bm25s.tokenize(corpus, stopwords="en", stemmer=self.stemmer)
+
+        logger.info("Building BM25 index...")
+        self.retriever = bm25s.BM25()
+        self.retriever.index(corpus_tokens)
+
+        logger.info(f"Indexed {len(corpus)} documents.")
+        self.corpus = corpus
+        
+        # Initialize results file if it doesn't exist
+        if not RESULTS_FILE.exists():
+            with open(RESULTS_FILE, 'w') as f:
+                json.dump([], f)
 
     def _retrieve(self, query_bundle: QueryBundle) -> list[NodeWithScore]:
-        """Retrieve with extensive debugging"""
+        """Retrieve using bm25s retriever, log and save JSON output."""
         query = query_bundle.query_str
+        query_tokens = bm25s.tokenize(query, stemmer=self.stemmer)
         
-        logger.info(f"\n{'='*80}")
-        logger.info(f"🔍 QUERY: '{query}'")
-        logger.info(f"{'='*80}")
-        logger.info(f"Query length: {len(query)} chars")
-        logger.info(f"Query words: {query.split()}")
-        
-        # Show likely tokenization
-        token_pattern = r'(?u)\b\w\w+\b'
-        tokens = re.findall(token_pattern, query.lower())
-        logger.info(f"Likely tokens after tokenization: {tokens}")
+        # request top-k results (use configured top_k)
+        results, scores = self.retriever.retrieve(query_tokens, k=self.top_k)
 
-        # Run retrieval
-        logger.info(f"\n⏳ Running BM25 retrieval...")
-        results = self.retriever.retrieve(query)
-        
-        logger.info(f"\n📊 Retrieved {len(results)} results")
-        
-        if not results:
-            logger.warning(f"❌ NO RESULTS FOUND!")
-            logger.info(f"\n🔍 Investigating why no results...")
-            
-            # Manual search in first 50 documents
-            query_terms_lower = [t.lower() for t in query.split()]
-            logger.info(f"Searching for terms: {query_terms_lower}")
-            
-            found_count = 0
-            for i, node in enumerate(self.nodes[:50]):
-                text = getattr(node, "text", "").lower()
-                matches = [term for term in query_terms_lower if term in text]
-                if matches:
-                    found_count += 1
-                    logger.info(f"\n  ✓ Node {i} contains: {matches}")
-                    logger.info(f"    Preview: {text[:150]}...")
-            
-            logger.info(f"\nFound {found_count} documents (out of first 50) containing query terms")
-            return results
+        # Build lists for both LlamaIndex (NodeWithScore) and JSON output (dicts)
+        nodes_with_scores = []  # For LlamaIndex
+        json_results = []       # For saving to file
 
-        # Log all results in detail
-        query_terms_lower = [t.lower() for t in query.split()]
-        
-        for rank, res in enumerate(results, start=1):
-            text = getattr(res.node, "text", "")
-            metadata = getattr(res.node, "metadata", {})
-            score = float(res.score) if res.score is not None else 0.0
-            
-            logger.info(f"\n{'─'*80}")
-            logger.info(f"📄 RANK {rank}")
-            logger.info(f"{'─'*80}")
-            logger.info(f"Score: {score:.6f}")
-            logger.info(f"Text length: {len(text)} chars")
-            
-            # Check which query terms appear
-            text_lower = text.lower()
-            matches = {}
-            for term in query_terms_lower:
-                count = text_lower.count(term)
-                matches[term] = count
-                if count > 0:
-                    logger.info(f"  ✓ '{term}' appears {count} times")
+        for i in range(results.shape[1]):
+            doc_or_id, score = results[0, i], scores[0, i]
+            score = float(score)
+
+            # default values
+            doc_id = None
+            window_text = None
+            original_text = None
+            metadata = {}
+            node = None
+
+            # try to treat returned value as an index into our corpus/doc_info
+            try:
+                idx = int(doc_or_id)
+                if 0 <= idx < len(self.doc_info):
+                    info = self.doc_info[idx]
+                    doc_id = info.get("id")
+                    node = info.get("node")
+                    window_text = info.get("window", "")
+                    original_text = info.get("original_text", "")
+                    metadata = info.get("metadata", {}) or {}
                 else:
-                    logger.info(f"  ✗ '{term}' not found")
-            
-            # Show text preview
-            logger.info(f"\nText preview (first 300 chars):")
-            logger.info(f"{text[:300]}...")
-            
-            if metadata:
-                logger.info(f"\nMetadata: {metadata}")
-            
-            # Highlight query terms in text
-            snippet = text[:500]
-            for term in query_terms_lower:
-                if term in snippet.lower():
-                    # Find first occurrence
-                    idx = snippet.lower().find(term)
-                    context_start = max(0, idx - 50)
-                    context_end = min(len(snippet), idx + len(term) + 50)
-                    context = snippet[context_start:context_end]
-                    logger.info(f"\nContext around '{term}': ...{context}...")
-                    break
+                    # index out of range — fall back to string representation
+                    window_text = str(doc_or_id)
+            except Exception:
+                # not an index; assume the retriever returned the text directly
+                window_text = str(doc_or_id)
 
-        # Warn if scores seem low
-        if results and results[0].score < 1.0:
-            logger.warning(f"\n⚠️  Top score is only {results[0].score:.6f} - this seems low!")
-            logger.info(f"This might indicate:")
-            logger.info(f"  - Query terms are very common (high IDF penalty)")
-            logger.info(f"  - Documents are very long (length normalization)")
-            logger.info(f"  - Stemming is affecting matches")
+            # print for debugging/visibility
+            print(f"Rank {i+1} (score: {score:.2f}): {window_text[:200]}...")
 
-        logger.info(f"\n{'='*80}\n")
-        return results
-    
-    def normalize_text(text: str) -> str:
-        if not text:
-            return ""
-        # Normalize Unicode and remove non-breaking spaces
-        text = unicodedata.normalize("NFKC", text)
-        text = text.replace("\xa0", " ")
-        # Replace hyphens/underscores with spaces
-        text = text.replace("-", " ").replace("_", " ")
-        # Collapse multiple spaces and lowercase
-        text = re.sub(r"\s+", " ", text)
-        return text.lower().strip()
+            # Create NodeWithScore for LlamaIndex
+            if node:
+                node_with_score = NodeWithScore(node=node, score=score)
+                nodes_with_scores.append(node_with_score)
+
+            # Create dict for JSON output
+            json_results.append({
+                "rank": i + 1,
+                "id": doc_id,
+                "window": window_text,
+                "original_text": original_text,
+                "metadata": metadata,
+                "score": score,
+            })
+
+        # Save to JSON file
+        self._save_results_to_json(query, json_results)
+        
+        # Return NodeWithScore objects for LlamaIndex
+        return nodes_with_scores
+
+    def _save_results_to_json(self, query: str, results: list[dict]):
+        """Save retrieval results to JSON file."""
+        
+        # Create result entry
+        result_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "query": query,
+            "retriever": self.retriever_name,
+            "top_k": self.top_k,
+            "results": results
+        }
+        
+        # Load existing results
+        try:
+            with open(RESULTS_FILE, 'r') as f:
+                all_results = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            all_results = []
+        
+        # Append new result
+        all_results.append(result_entry)
+        
+        # Save back to file
+        with open(RESULTS_FILE, 'w') as f:
+            json.dump(all_results, f, indent=2)
+        
+        logger.info(f"Saved results to {RESULTS_FILE}")

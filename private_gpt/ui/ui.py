@@ -7,6 +7,8 @@ from collections.abc import Iterable
 from enum import Enum
 from pathlib import Path
 from typing import Any
+import json
+from datetime import datetime
 
 import gradio as gr  # type: ignore
 from fastapi import FastAPI
@@ -145,6 +147,40 @@ class PrivateGptUi:
                 sources_text += "<hr>\n\n"
                 full_response += sources_text
             yield full_response
+
+            # Save query and response after completion
+            save_query_response(message, full_response, mode)
+        
+
+        def save_query_response(query: str, response: str, mode: Modes) -> None:
+            """Save query and response to a JSON file."""
+            log_entry = {
+                "timestamp": datetime.now().isoformat(),
+                "query": query,
+                "response": response,
+                "mode": mode.value if hasattr(mode, 'value') else str(mode),
+                "selected_file": self._selected_filename
+            }
+            
+            # Define log file path
+            log_file = Path("chat_logs.json")
+            
+            # Load existing logs or create new list
+            if log_file.exists():
+                with open(log_file, 'r', encoding='utf-8') as f:
+                    try:
+                        logs = json.load(f)
+                    except json.JSONDecodeError:
+                        logs = []
+            else:
+                logs = []
+            
+            # Append new entry
+            logs.append(log_entry)
+            
+            # Save back to file
+            with open(log_file, 'w', encoding='utf-8') as f:
+                json.dump(logs, f, indent=2, ensure_ascii=False)
 
         def yield_tokens(token_gen: TokenGen) -> Iterable[str]:
             full_response: str = ""
