@@ -48,17 +48,11 @@ SOURCES_SEPARATOR = "<hr>Sources: \n"
 class Modes(str, Enum):
     DENSE_RAG_MODE = "Dense RAG"
     SPARSE_RAG_MODE = "Sparse RAG"
-    SEARCH_MODE = "Search"
-    BASIC_CHAT_MODE = "Basic"
-    SUMMARIZE_MODE = "Summarize"
 
 
 MODES: list[Modes] = [
     Modes.DENSE_RAG_MODE,
     Modes.SPARSE_RAG_MODE,
-    Modes.SEARCH_MODE,
-    Modes.BASIC_CHAT_MODE,
-    Modes.SUMMARIZE_MODE,
 ]
 
 
@@ -182,12 +176,6 @@ class PrivateGptUi:
             with open(log_file, 'w', encoding='utf-8') as f:
                 json.dump(logs, f, indent=2, ensure_ascii=False)
 
-        def yield_tokens(token_gen: TokenGen) -> Iterable[str]:
-            full_response: str = ""
-            for token in token_gen:
-                full_response += str(token)
-                yield full_response
-
         def build_history() -> list[ChatMessage]:
             history_messages: list[ChatMessage] = []
 
@@ -261,45 +249,6 @@ class PrivateGptUi:
 
                 # Yield incremental response tokens
                 yield from yield_deltas(query_stream)
-            case Modes.BASIC_CHAT_MODE:
-                llm_stream = self._chat_service.stream_chat(
-                    messages=all_messages,
-                    use_context=False,
-                )
-                yield from yield_deltas(llm_stream)
-
-            case Modes.SEARCH_MODE:
-                response = self._chunks_service.retrieve_relevant(
-                    text=message, limit=4, prev_next_chunks=0
-                )
-
-                sources = Source.curate_sources(response)
-
-                yield "\n\n\n".join(
-                    f"{index}. **{source.file} "
-                    f"(page {source.page})**\n "
-                    f"{source.text}"
-                    for index, source in enumerate(sources, start=1)
-                )
-            case Modes.SUMMARIZE_MODE:
-                # Summarize the given message, optionally using selected files
-                context_filter = None
-                if self._selected_filename:
-                    docs_ids = []
-                    for ingested_document in self._ingest_service.list_ingested():
-                        if (
-                            ingested_document.doc_metadata["file_name"]
-                            == self._selected_filename
-                        ):
-                            docs_ids.append(ingested_document.doc_id)
-                    context_filter = ContextFilter(docs_ids=docs_ids)
-
-                summary_stream = self._summarize_service.stream_summarize(
-                    use_context=True,
-                    context_filter=context_filter,
-                    instructions=message,
-                )
-                yield from yield_tokens(summary_stream)
 
     # On initialization and on mode change, this function set the system prompt
     # to the default prompt based on the mode (and user settings).
@@ -313,12 +262,6 @@ class PrivateGptUi:
             # For sparse RAG mode, use same default as dense RAG
             case Modes.SPARSE_RAG_MODE:
                 p = settings().ui.default_query_system_prompt
-            # For chat mode, obtain default system prompt from settings
-            case Modes.BASIC_CHAT_MODE:
-                p = settings().ui.default_chat_system_prompt
-            # For summarization mode, obtain default system prompt from settings
-            case Modes.SUMMARIZE_MODE:
-                p = settings().ui.default_summarization_system_prompt
             # For any other mode, clear the system prompt
             case _:
                 p = ""
@@ -331,12 +274,6 @@ class PrivateGptUi:
                 return "Get contextualized answers from selected files."
             case Modes.SPARSE_RAG_MODE:
                 return "Get sparse contextualized answers from selected files (bm25)."
-            case Modes.SEARCH_MODE:
-                return "Find relevant chunks of text in selected files."
-            case Modes.BASIC_CHAT_MODE:
-                return "Chat with the LLM using its training data. Files are ignored."
-            case Modes.SUMMARIZE_MODE:
-                return "Generate a summary of the selected files. Prompt to customize the result."
             case _:
                 return ""
 
@@ -347,31 +284,14 @@ class PrivateGptUi:
     def _set_explanatation_mode(self, explanation_mode: str) -> None:
         self._explanation_mode = explanation_mode
 
-    def _dense_rag_extra_action(self) -> str:
-        """Handler for the Dense RAG extra button click.
-        
-        This method will be called when the Dense RAG extra button is clicked.
-        You can customize this method to perform any specific action you need.
-        
-        Returns:
-            str: A message to display to the user (optional)
-        """
-        logger.info("Dense RAG extra button clicked!")
-        # Add your custom functionality here
-        # For example: enable advanced settings, trigger special processing, etc.
-        return "Dense RAG enhanced mode activated! 🚀"
-
     def _set_current_mode(self, mode: Modes) -> Any:
         self.mode = mode
         self._set_system_prompt(self._get_default_system_prompt(mode))
         self._set_explanatation_mode(self._get_default_mode_explanation(mode))
         interactive = self._system_prompt is not None
-        # Show the dense RAG extra button only when Dense RAG mode is selected
-        show_dense_rag_button = mode == Modes.DENSE_RAG_MODE.value
         return [
             gr.update(placeholder=self._system_prompt, interactive=interactive),
             gr.update(value=self._explanation_mode),
-            gr.update(visible=show_dense_rag_button),
         ]
 
     def _list_ingested_files(self) -> list[list[str]]:
@@ -454,19 +374,11 @@ class PrivateGptUi:
 
     def _deselect_selected_file(self) -> Any:
         self._selected_filename = None
-        return [
-            gr.components.Button(interactive=False),
-            gr.components.Button(interactive=False),
-            gr.components.Textbox("All files"),
-        ]
+        return gr.components.Textbox("All files")
 
     def _selected_a_file(self, select_data: gr.SelectData) -> Any:
         self._selected_filename = select_data.value
-        return [
-            gr.components.Button(interactive=True),
-            gr.components.Button(interactive=True),
-            gr.components.Textbox(self._selected_filename),
-        ]
+        return gr.components.Textbox(self._selected_filename)
 
     def _build_ui_blocks(self) -> gr.Blocks:
         logger.debug("Creating the UI blocks")
@@ -498,22 +410,11 @@ class PrivateGptUi:
             with gr.Row(equal_height=False):
                 with gr.Column(scale=3):
                     default_mode = self._default_mode
-                    with gr.Row():
-                        with gr.Column(scale=4):
-                            mode = gr.Radio(
-                                [mode.value for mode in MODES],
-                                label="Mode",
-                                value=default_mode,
-                            )
-                        with gr.Column(scale=1, min_width=120):
-                            # Custom button for Dense RAG mode - positioned next to mode selection
-                            dense_rag_extra_button = gr.components.Button(
-                                "🔍 Enhanced",
-                                size="sm",
-                                visible=default_mode == Modes.DENSE_RAG_MODE.value,
-                                variant="secondary",
-                                elem_classes="dense-rag-btn"
-                            )
+                    mode = gr.Radio(
+                        [mode.value for mode in MODES],
+                        label="Mode",
+                        value=default_mode,
+                    )
                     explanation_mode = gr.Textbox(
                         placeholder=self._get_default_mode_explanation(default_mode),
                         show_label=False,
@@ -548,52 +449,15 @@ class PrivateGptUi:
                         "De-select selected file", size="sm", interactive=False
                     )
                     selected_text = gr.components.Textbox(
-                        "All files", label="Selected for Query or Deletion", max_lines=1
-                    )
-                    delete_file_button = gr.components.Button(
-                        "🗑️ Delete selected file",
-                        size="sm",
-                        visible=settings().ui.delete_file_button_enabled,
-                        interactive=False,
-                    )
-                    delete_files_button = gr.components.Button(
-                        "⚠️ Delete ALL files",
-                        size="sm",
-                        visible=settings().ui.delete_all_files_button_enabled,
+                        "All files", label="Selected for Query", max_lines=1
                     )
                     deselect_file_button.click(
                         self._deselect_selected_file,
-                        outputs=[
-                            delete_file_button,
-                            deselect_file_button,
-                            selected_text,
-                        ],
+                        outputs=selected_text,
                     )
                     ingested_dataset.select(
                         fn=self._selected_a_file,
-                        outputs=[
-                            delete_file_button,
-                            deselect_file_button,
-                            selected_text,
-                        ],
-                    )
-                    delete_file_button.click(
-                        self._delete_selected_file,
-                        outputs=[
-                            ingested_dataset,
-                            delete_file_button,
-                            deselect_file_button,
-                            selected_text,
-                        ],
-                    )
-                    delete_files_button.click(
-                        self._delete_all_files,
-                        outputs=[
-                            ingested_dataset,
-                            delete_file_button,
-                            deselect_file_button,
-                            selected_text,
-                        ],
+                        outputs=selected_text,
                     )
                     system_prompt_input = gr.Textbox(
                         placeholder=self._system_prompt,
@@ -606,18 +470,12 @@ class PrivateGptUi:
                     mode.change(
                         self._set_current_mode,
                         inputs=mode,
-                        outputs=[system_prompt_input, explanation_mode, dense_rag_extra_button],
+                        outputs=[system_prompt_input, explanation_mode],
                     )
                     # On blur, set system prompt to use in queries
                     system_prompt_input.blur(
                         self._set_system_prompt,
                         inputs=system_prompt_input,
-                    )
-                    
-                    # Wire up the Dense RAG extra button
-                    dense_rag_extra_button.click(
-                        self._dense_rag_extra_action,
-                        outputs=None,  # Could add a status message output if needed
                     )
 
                     def get_model_label() -> str | None:
