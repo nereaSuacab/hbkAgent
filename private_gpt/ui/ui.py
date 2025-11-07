@@ -388,7 +388,7 @@ class PrivateGptUi:
             theme=gr.themes.Soft(primary_hue=slate),
             css="""
                 .header-container {
-                    background-color: #C4DAFA !important;
+                    background-color: transparent !important;
                     padding: 20px !important;
                     border-radius: 8px !important;
                     text-align: center !important;
@@ -397,16 +397,14 @@ class PrivateGptUi:
             """,
         ) as blocks:
             with gr.Row(elem_classes="header-container"):
-                with gr.Column(scale=1):
-                    gr.Image(
-                        "private_gpt/ui/header.png",
-                        show_label=False,
-                        container=False,
-                        height=60,
-                        show_download_button=False,
-                        show_share_button=False
-                    )
-                gr.Markdown("# HBK Agent", elem_classes="header-title")
+                gr.Image(
+                    "private_gpt/ui/header.png",
+                    show_label=False,
+                    container=False,
+                    height=80,
+                    show_download_button=False,
+                    show_share_button=False
+                )
             with gr.Row(equal_height=False):
                 with gr.Column(scale=3):
                     default_mode = self._default_mode
@@ -449,7 +447,7 @@ class PrivateGptUi:
                         "De-select selected file", size="sm", interactive=False
                     )
                     selected_text = gr.components.Textbox(
-                        "All files", label="Selected for Query", max_lines=1
+                        "All files", label="Selected for Query or Deletion", max_lines=1
                     )
                     deselect_file_button.click(
                         self._deselect_selected_file,
