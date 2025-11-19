@@ -57,6 +57,9 @@ class BM25Retriever(BaseRetriever):
                 "original_text": full_text,
                 "metadata": doc.metadata,
             })
+        
+        self.protected_phrases = ["sound level meter", "hand held device", "ISO 3382", "ISO 18233", "ISO 16283", "ISO 9612", "ISO 10140", "HBK 2755", "B&K 2245", "sound source", "Type 4292-L", "HBK 2755"]
+        corpus = [self.preprocess_text(text) for text in corpus]
 
         # Tokenize and index
         logger.info("Tokenizing corpus...")
@@ -73,11 +76,29 @@ class BM25Retriever(BaseRetriever):
         if not RESULTS_FILE.exists():
             with open(RESULTS_FILE, 'w') as f:
                 json.dump([], f)
+    
+    def preprocess_text(self, text):
+        """Replace multi-word phrases with single tokens."""
+        for phrase in self.protected_phrases:
+            token = phrase.replace(" ", "_")
+            text = re.sub(
+                r'\b' + re.escape(phrase) + r'\b', 
+                token, 
+                text, 
+                flags=re.IGNORECASE
+            )
+        return text
 
     def _retrieve(self, query_bundle: QueryBundle) -> list[NodeWithScore]:
         """Retrieve using bm25s retriever, log and save JSON output."""
+        # Original query string
         query = query_bundle.query_str
-        query_tokens = bm25s.tokenize(query, stemmer=self.stemmer)
+
+        # Preprocess query the same way as the corpus
+        query_processed = self.preprocess_text(query)
+
+        # Tokenize the preprocessed query
+        query_tokens = bm25s.tokenize([query_processed], stemmer=self.stemmer)
         
         # request top-k results (use configured top_k)
         results, scores = self.retriever.retrieve(query_tokens, k=self.top_k)

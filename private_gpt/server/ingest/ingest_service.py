@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, AnyStr, BinaryIO
 
 from injector import inject, singleton
-from llama_index.core.node_parser import SentenceWindowNodeParser
+from llama_index.core.node_parser import SentenceWindowNodeParser, SentenceSplitter
 from llama_index.core.storage import StorageContext
 
 from private_gpt.components.embedding.embedding_component import EmbeddingComponent
@@ -48,7 +48,14 @@ class IngestService:
         )
         # logger.info(f"Storage context created in {time.time() - start:.2f}s")
         
-        node_parser = SentenceWindowNodeParser.from_defaults()
+        # node_parser = SentenceWindowNodeParser.from_defaults()
+
+        node_parser = SentenceSplitter(
+            chunk_size=512,          # Balance entre contexto y precisión
+            chunk_overlap=50,        # Mantiene continuidad
+            paragraph_separator="\n\n\n",  # Divide en secciones grandes (variantes)
+            separator="\n\n",         # Divide en párrafos normales
+        )
 
         # logger.info("Getting ingestion component...")
         start = time.time()
