@@ -27,6 +27,7 @@ from private_gpt.components.vector_store.vector_store_component import (
 from private_gpt.components.sparse_store.sparse_store_component import (
     SparseStoreComponent,
 )
+from private_gpt.components.retrievers.hybrid_retriever import HybridRetriever
 from private_gpt.open_ai.extensions.context_filter import ContextFilter
 from private_gpt.server.chunks.chunks_service import Chunk
 from private_gpt.settings.settings import Settings
@@ -133,6 +134,38 @@ class ChatService:
                 retriever = self.sparse_store_component.get_retriever(
                     context_filter=context_filter,
                     top_k=settings.rag.similarity_top_k,
+                )
+            elif retriever_type == "hybrid":
+                logger.info("Using Hybrid (Dense + BM25) retriever")
+    
+                # Request more results from each retriever for better fusion
+                candidate_top_k = settings.rag.similarity_top_k * 2
+                
+                # Get Dense retriever
+                dense_retriever = self.vector_store_component.get_retriever(
+                    index=self.index,
+                    context_filter=context_filter,
+                    similarity_top_k=candidate_top_k,
+                )
+                
+                # Get BM25 retriever
+                bm25_retriever = self.sparse_store_component.get_retriever(
+                    context_filter=context_filter,
+                    top_k=candidate_top_k,
+                )
+                
+                # Create hybrid retriever with configurable weights
+                dense_weight = getattr(settings.rag, 'dense_weight', 0.5)
+                bm25_weight = getattr(settings.rag, 'bm25_weight', 0.5)
+                fusion_method = getattr(settings.rag, 'fusion_method', 'rrf')
+                
+                retriever = HybridRetriever(
+                    dense_retriever=dense_retriever,
+                    bm25_retriever=bm25_retriever,
+                    dense_weight=dense_weight,
+                    bm25_weight=bm25_weight,
+                    top_k=settings.rag.similarity_top_k,
+                    fusion_method=fusion_method
                 )
             else:
                 raise ValueError(f"Unknown retriever_type: {retriever_type}")

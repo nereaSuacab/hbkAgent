@@ -48,11 +48,13 @@ SOURCES_SEPARATOR = "<hr>Sources: \n"
 class Modes(str, Enum):
     DENSE_RAG_MODE = "Dense RAG"
     SPARSE_RAG_MODE = "Sparse RAG"
+    HYBRID_RAG_MODE = "Hybrid RAG"
 
 
 MODES: list[Modes] = [
     Modes.DENSE_RAG_MODE,
     Modes.SPARSE_RAG_MODE,
+    Modes.HYBRID_RAG_MODE,
 ]
 
 
@@ -224,6 +226,7 @@ class PrivateGptUi:
                     messages=all_messages,
                     use_context=True,
                     context_filter=context_filter,
+                    retriever_type="dense",
                 )
                 yield from yield_deltas(query_stream)
             case Modes.SPARSE_RAG_MODE:
@@ -249,6 +252,28 @@ class PrivateGptUi:
 
                 # Yield incremental response tokens
                 yield from yield_deltas(query_stream)
+            case Modes.HYBRID_RAG_MODE:
+                context_filter = None
+                if self._selected_filename is not None:
+                    docs_ids = []
+                    for ingested_document in self._ingest_service.list_ingested():
+                        if (
+                            ingested_document.doc_metadata["file_name"]
+                            == self._selected_filename
+                        ):
+                            docs_ids.append(ingested_document.doc_id)
+                    context_filter = ContextFilter(docs_ids=docs_ids)
+
+                query_stream = self._chat_service.stream_chat(
+                    messages=all_messages,
+                    use_context=True,
+                    context_filter=context_filter,
+                    retriever_type="hybrid",  # key addition
+                )
+
+                # Yield incremental response tokens
+                yield from yield_deltas(query_stream)
+
 
     # On initialization and on mode change, this function set the system prompt
     # to the default prompt based on the mode (and user settings).
@@ -263,6 +288,9 @@ class PrivateGptUi:
             case Modes.SPARSE_RAG_MODE:
                 p = settings().ui.default_query_system_prompt
             # For any other mode, clear the system prompt
+            case Modes.HYBRID_RAG_MODE:
+                p = settings().ui.default_query_system_prompt
+            # For hybr RAG mode, use same default as dense RAG
             case _:
                 p = ""
         return p
@@ -274,6 +302,8 @@ class PrivateGptUi:
                 return "Get contextualized answers from selected files."
             case Modes.SPARSE_RAG_MODE:
                 return "Get sparse contextualized answers from selected files (bm25)."
+            case Modes.HYBRID_RAG_MODE:
+                return "Get answers using both dense and sparse retrieval from selected files."
             case _:
                 return ""
 
