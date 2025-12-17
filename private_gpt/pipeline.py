@@ -2,6 +2,7 @@
 Pipeline script to automatically execute queries from a JSON file.
 This script bypasses the GUI and directly uses the ChatService.
 Executes each question in BOTH Dense and Sparse modes for comparison.
+FIXED: Now properly uses BOTH default_chat_system_prompt AND default_query_system_prompt
 """
 
 import json
@@ -25,6 +26,47 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Chat logs file path (same as GUI)
+CHAT_LOGS_FILE = Path("chat_logs.json")
+
+
+def save_to_chat_logs(query: str, response: str, mode: str, selected_file: str | None = None) -> None:
+    """
+    Save query and response to chat_logs.json (same format as GUI).
+    
+    Args:
+        query: The question asked
+        response: The response received
+        mode: "dense" or "sparse"
+        selected_file: Optional selected file name
+    """
+    log_entry = {
+        "timestamp": datetime.now().isoformat(),
+        "query": query,
+        "response": response,
+        "mode": mode,
+        "selected_file": selected_file
+    }
+    
+    # Load existing logs or create new list
+    if CHAT_LOGS_FILE.exists():
+        with open(CHAT_LOGS_FILE, 'r', encoding='utf-8') as f:
+            try:
+                logs = json.load(f)
+            except json.JSONDecodeError:
+                logs = []
+    else:
+        logs = []
+    
+    # Append new entry
+    logs.append(log_entry)
+    
+    # Save back to file
+    with open(CHAT_LOGS_FILE, 'w', encoding='utf-8') as f:
+        json.dump(logs, f, indent=2, ensure_ascii=False)
+    
+    logger.debug(f"Saved to chat_logs.json: {query[:50]}...")
+
 
 class QueryPipeline:
     """
@@ -36,13 +78,20 @@ class QueryPipeline:
         """Initialize the pipeline with required services."""
         self.chat_service: ChatService = global_injector.get(ChatService)
         self.ingest_service: IngestService = global_injector.get(IngestService)
-        self.system_prompt = settings().ui.default_query_system_prompt
         
-    def load_queries(self, queries_file: str = "C:\\Users\\nerea\\Documents\\MasterDTU\\masterThesis\\hbkAgent\\private_gpt\\gt.json") -> list[dict]:
+        # Load BOTH system prompts from settings
+        self.chat_system_prompt = settings().ui.default_chat_system_prompt
+        self.query_system_prompt = settings().ui.default_query_system_prompt
+        
+        logger.info("Loaded system prompts from config:")
+        logger.info(f"  - Chat system prompt: {self.chat_system_prompt[:80]}...")
+        logger.info(f"  - Query system prompt: {self.query_system_prompt[:80]}...")
+        
+    def load_queries(self, queries_file: str) -> list[dict]:
         """
         Load queries from a JSON file.
         
-        Expected JSON format (your format):
+        Expected JSON format:
         [
             {
                 "id": "q1",
@@ -105,7 +154,7 @@ class QueryPipeline:
         query: str, 
         mode: str = "dense",
         selected_file: str | None = None,
-        system_prompt: str | None = None
+        use_rag_mode: bool = True
     ) -> dict[str, Any]:
         """
         Execute a single query and return the response.
@@ -114,7 +163,8 @@ class QueryPipeline:
             query: The question to ask
             mode: "dense" or "sparse" RAG mode
             selected_file: Optional file to query against
-            system_prompt: Optional custom system prompt
+            use_rag_mode: If True, uses query_system_prompt (RAG mode). 
+                         If False, uses chat_system_prompt (Basic chat mode)
             
         Returns:
             Dictionary with response and metadata
@@ -122,17 +172,28 @@ class QueryPipeline:
         logger.info(f"  [{mode.upper()}] Executing...")
         
         # Prepare messages
-        messages = [ChatMessage(content=query, role=MessageRole.USER)]
+        messages = []
         
-        # Add system prompt if provided
-        if system_prompt or self.system_prompt:
-            messages.insert(
-                0,
-                ChatMessage(
-                    content=system_prompt or self.system_prompt,
-                    role=MessageRole.SYSTEM
-                )
+        # Select appropriate system prompt based on mode
+        if use_rag_mode:
+            # RAG mode: Use query_system_prompt (context-based answering)
+            system_prompt = self.query_system_prompt
+        else:
+            # Basic chat mode: Use chat_system_prompt (general assistant behavior)
+            system_prompt = self.chat_system_prompt
+        
+        # Add system prompt
+        messages.append(
+            ChatMessage(
+                content=system_prompt,
+                role=MessageRole.SYSTEM
             )
+        )
+        
+        # Add user query
+        messages.append(
+            ChatMessage(content=query, role=MessageRole.USER)
+        )
         
         # Get context filter if file is specified
         context_filter = self.get_context_filter(selected_file)
@@ -146,7 +207,7 @@ class QueryPipeline:
             
             completion_gen = self.chat_service.stream_chat(
                 messages=messages,
-                use_context=True,
+                use_context=use_rag_mode,  # Only use context in RAG mode
                 context_filter=context_filter,
                 retriever_type=retriever_type
             )
@@ -164,21 +225,45 @@ class QueryPipeline:
             
             # Extract sources
             sources = []
+            sources_text = ""
             if completion_gen.sources:
-                for source in completion_gen.sources:
+                sources_text = "\n\n<hr>Sources: \n\n\n"
+                used_files = set()
+                for idx, source in enumerate(completion_gen.sources, 1):
                     doc_metadata = source.document.doc_metadata
+                    file_name = doc_metadata.get("file_name", "-") if doc_metadata else "-"
+                    page_label = doc_metadata.get("page_label", "-") if doc_metadata else "-"
+                    
                     sources.append({
-                        "file": doc_metadata.get("file_name", "-") if doc_metadata else "-",
-                        "page": doc_metadata.get("page_label", "-") if doc_metadata else "-",
+                        "file": file_name,
+                        "page": page_label,
                         "text_preview": source.text[:200] + "..." if len(source.text) > 200 else source.text
                     })
+                    
+                    # Build sources text (same format as GUI)
+                    if f"{file_name}-{page_label}" not in used_files:
+                        sources_text += f"{idx}. {file_name} (page {page_label}) \n\n"
+                        used_files.add(f"{file_name}-{page_label}")
+                
+                sources_text += "<hr>\n\n"
+            
+            # Save to chat_logs.json (same format as GUI)
+            response_with_sources = full_response + sources_text
+            save_to_chat_logs(
+                query=query,
+                response=response_with_sources,
+                mode=f"{mode.capitalize()} RAG" if use_rag_mode else f"{mode.capitalize()} Chat",
+                selected_file=selected_file
+            )
             
             result = {
                 "mode": mode,
                 "response": full_response,
+                "response_with_sources": response_with_sources,
                 "sources": sources,
                 "sources_count": len(sources),
                 "execution_time_seconds": round(execution_time, 2),
+                "system_prompt_used": "query_system_prompt" if use_rag_mode else "chat_system_prompt",
                 "success": True
             }
             
@@ -187,21 +272,33 @@ class QueryPipeline:
             
         except Exception as e:
             logger.error(f"  [{mode.upper()}] ✗ Error: {e}")
+            
+            # Save error to chat_logs.json too
+            save_to_chat_logs(
+                query=query,
+                response=f"ERROR: {str(e)}",
+                mode=f"{mode.capitalize()} RAG" if use_rag_mode else f"{mode.capitalize()} Chat",
+                selected_file=selected_file
+            )
+            
             return {
                 "mode": mode,
                 "response": "",
+                "response_with_sources": "",
                 "sources": [],
                 "sources_count": 0,
                 "error": str(e),
                 "execution_time_seconds": 0,
+                "system_prompt_used": "query_system_prompt" if use_rag_mode else "chat_system_prompt",
                 "success": False
             }
     
     def run_pipeline(
         self, 
-        queries_file: str = "C:\\Users\\nerea\\Documents\\MasterDTU\\masterThesis\\hbkAgent\\private_gpt\\gt.json",
+        queries_file: str = "gt.json",
         output_file: str = "comparison_results.json",
-        selected_file: str | None = None
+        selected_file: str | None = None,
+        use_rag_mode: bool = True
     ) -> None:
         """
         Run the complete pipeline: load queries, execute them in BOTH modes, and save results.
@@ -210,9 +307,14 @@ class QueryPipeline:
             queries_file: Path to input JSON with queries
             output_file: Path to output JSON with results
             selected_file: Optional specific file to query against
+            use_rag_mode: If True, uses RAG with query_system_prompt. 
+                         If False, uses basic chat with chat_system_prompt
         """
         logger.info("=" * 80)
         logger.info("Starting Query Comparison Pipeline (Dense vs Sparse)")
+        logger.info(f"Mode: {'RAG (with context)' if use_rag_mode else 'Basic Chat (no context)'}")
+        logger.info(f"System prompt: {'query_system_prompt' if use_rag_mode else 'chat_system_prompt'}")
+        logger.info(f"Chat logs will be saved to: {CHAT_LOGS_FILE.absolute()}")
         logger.info("=" * 80)
         
         # Load queries
@@ -241,7 +343,7 @@ class QueryPipeline:
                 query=question,
                 mode="dense",
                 selected_file=selected_file,
-                system_prompt=None
+                use_rag_mode=use_rag_mode
             )
             
             # Execute in SPARSE mode
@@ -249,7 +351,7 @@ class QueryPipeline:
                 query=question,
                 mode="sparse",
                 selected_file=selected_file,
-                system_prompt=None
+                use_rag_mode=use_rag_mode
             )
             
             # Combine results with original question data
@@ -284,7 +386,12 @@ class QueryPipeline:
                 "total_questions": total_queries,
                 "successful_questions": len([r for r in results if r["dense"]["success"] and r["sparse"]["success"]]),
                 "queries_file": queries_file,
-                "selected_file": selected_file
+                "selected_file": selected_file,
+                "chat_logs_file": str(CHAT_LOGS_FILE.absolute()),
+                "rag_mode": use_rag_mode,
+                "system_prompt_used": "query_system_prompt" if use_rag_mode else "chat_system_prompt",
+                "chat_system_prompt": self.chat_system_prompt,
+                "query_system_prompt": self.query_system_prompt
             },
             "summary": summary,
             "results": results
@@ -300,7 +407,9 @@ class QueryPipeline:
             logger.info("PIPELINE COMPLETED SUCCESSFULLY!")
             logger.info(f"{'=' * 80}")
             logger.info(f"📊 Results saved to: {output_file}")
+            logger.info(f"📝 Chat logs saved to: {CHAT_LOGS_FILE}")
             logger.info(f"📝 Total questions processed: {total_queries}")
+            logger.info(f"📝 Total chat log entries: {total_queries * 2} (dense + sparse)")
             logger.info(f"✓ Successful comparisons: {output_data['pipeline_info']['successful_questions']}")
             logger.info(f"\n📈 SUMMARY STATISTICS:")
             logger.info(f"  Dense avg time: {summary['dense']['avg_time']:.2f}s")
@@ -351,9 +460,10 @@ def main():
     
     # Customize these parameters
     pipeline.run_pipeline(
-        queries_file="C:\\Users\\nerea\\Documents\\MasterDTU\\masterThesis\\hbkAgent\\private_gpt\\gt.json",  # Your questions file
-        output_file="comparison_results.json",  # Output with comparisons
-        selected_file=None  # Set to a filename if you want to filter by document
+        queries_file="C:\\Users\\nerea\\Documents\\MasterDTU\\masterThesis\\hbkAgent\\private_gpt\\gt.json",
+        output_file="comparison_results.json",
+        selected_file=None,
+        use_rag_mode=True  # True = use query_system_prompt (RAG), False = use chat_system_prompt (Basic)
     )
 
 

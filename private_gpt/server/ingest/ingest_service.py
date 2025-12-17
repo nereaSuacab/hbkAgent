@@ -3,6 +3,7 @@ import time
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, AnyStr, BinaryIO
+import re
 
 from injector import inject, singleton
 from llama_index.core.node_parser import SentenceWindowNodeParser, SentenceSplitter
@@ -50,11 +51,18 @@ class IngestService:
         
         # node_parser = SentenceWindowNodeParser.from_defaults()
 
+        # node_parser = SentenceSplitter(
+        #     chunk_size=512,          # Balance entre contexto y precisión
+        #     chunk_overlap=50,        # Mantiene continuidad
+        #     paragraph_separator="\n\n\n",  # Divide en secciones grandes (variantes)
+        #     separator="\n\n",         # Divide en párrafos normales
+        # )
+
         node_parser = SentenceSplitter(
-            chunk_size=512,          # Balance entre contexto y precisión
-            chunk_overlap=50,        # Mantiene continuidad
-            paragraph_separator="\n\n\n",  # Divide en secciones grandes (variantes)
-            separator="\n\n",         # Divide en párrafos normales
+            chunk_size=256,  # Smaller chunks → more keyword diversity
+            chunk_overlap=50,  # Higher overlap → better context preservation
+            paragraph_separator="\n\n\n",
+            separator="\n\n",
         )
 
         # logger.info("Getting ingestion component...")
@@ -69,11 +77,33 @@ class IngestService:
         
         # logger.info(f"=== IngestService initialized in {time.time() - overall_start:.2f}s ===")
 
+    def normalize_product_names(self, text: str) -> str:
+        """Normalize all B&K product variations to standard format"""
+        # HBK 2255, BK 2255, B&K 2255, B & K 2255 → BK2255
+        text = re.sub(
+            r'\b(B\s*&\s*K|BK|HBK)\s+(\d{{4}})\b',
+            r'HBK \2',
+            text,
+            flags=re.IGNORECASE
+        )
+        return text
+
     def _ingest_data(self, file_name: str, file_data: AnyStr) -> list[IngestedDoc]:
         logger.debug("Got file data of size=%s to ingest", len(file_data))
         # llama-index mainly supports reading from files, so
         # we have to create a tmp file to read for it to work
         # delete=False to avoid a Windows 11 permission error.
+        
+        # Normalize product names before ingestion
+        if isinstance(file_data, bytes):
+            # Decode, normalize, then encode back
+            text = file_data.decode('utf-8')
+            text = self.normalize_product_names(text)
+            file_data = text.encode('utf-8')
+        else:
+            # Already string, just normalize
+            file_data = self.normalize_product_names(str(file_data))
+        
         with tempfile.NamedTemporaryFile(delete=False) as tmp:
             try:
                 path_to_tmp = Path(tmp.name)

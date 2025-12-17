@@ -1,6 +1,7 @@
 from llama_index.core.retrievers import VectorIndexRetriever
 from llama_index.core.schema import NodeWithScore, QueryBundle
 import logging
+import re
 
 import json
 from pathlib import Path
@@ -17,15 +18,38 @@ class LoggingVectorIndexRetriever(VectorIndexRetriever):
         super().__init__(*args, **kwargs)
         self.retriever_name = "Dense/Vector"
     
-
-
+    def normalize_product_names(self, text: str) -> str:
+        """Normalize all B&K product variations to standard format"""
+        # HBK 2255, BK 2255, B&K 2255, B & K 2255 → HBK2255
+        text = re.sub(
+            r'\b(B\s*&\s*K|BK|HBK)\s+(\d{{4}})\b',
+            r'HBK \2',
+            text,
+            flags=re.IGNORECASE
+        )
+        return text
 
     def _retrieve(self, query_bundle: QueryBundle) -> list[NodeWithScore]:
+        # --- Normalize query ---
+        normalized_query = self.normalize_product_names(query_bundle.query_str)
+        # Replace the query inside the QueryBundle (if allowed)  
+        # or create a new modified QueryBundle
+        # Create a new QueryBundle with normalized query
+        normalized_bundle = QueryBundle(
+            query_str=normalized_query,
+            embedding=query_bundle.embedding  # Only pass embedding if it exists
+        )
+
+        logger.info(f"[{self.retriever_name}] Original Query: '{query_bundle.query_str}'")
+        logger.info(f"[{self.retriever_name}] Normalized Query: '{normalized_query}'")
+        logger.info(f"[{self.retriever_name}] Similarity top_k: {self.similarity_top_k}")
+
+
         logger.info(f"[{self.retriever_name}] Query: '{query_bundle.query_str}'")
         logger.info(f"[{self.retriever_name}] Similarity top_k: {self.similarity_top_k}")
         
         # Call the parent class retrieve method
-        results = super()._retrieve(query_bundle)
+        results = super()._retrieve(normalized_bundle)
 
 
         # Prepare results for JSON

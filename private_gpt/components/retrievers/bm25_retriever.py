@@ -88,6 +88,17 @@ class BM25Retriever(BaseRetriever):
                 flags=re.IGNORECASE
             )
         return text
+    
+    def normalize_product_names(self, text: str) -> str:
+        """Normalize all B&K product variations to standard format"""
+        # HBK 2255, BK 2255, B&K 2255, B & K 2255 → BK2255
+        text = re.sub(
+            r'\b(B\s*&\s*K|BK|HBK)\s+(\d{{4}})\b',
+            r'HBK \2',
+            text,
+            flags=re.IGNORECASE
+        )
+        return text
 
     def _retrieve(self, query_bundle: QueryBundle) -> list[NodeWithScore]:
         """Retrieve using bm25s retriever, log and save JSON output."""
@@ -96,9 +107,17 @@ class BM25Retriever(BaseRetriever):
 
         # Preprocess query the same way as the corpus
         query_processed = self.preprocess_text(query)
+        normalized_query = self.normalize_product_names(query_processed)
+        # Replace the query inside the QueryBundle (if allowed)  
+        # or create a new modified QueryBundle
+        # Create a new QueryBundle with normalized query
+        normalized_bundle = QueryBundle(
+            query_str=normalized_query,
+            embedding=query_bundle.embedding  # Only pass embedding if it exists
+        )
 
         # Tokenize the preprocessed query
-        query_tokens = bm25s.tokenize([query_processed], stemmer=self.stemmer)
+        query_tokens = bm25s.tokenize([normalized_bundle.query_str], stemmer=self.stemmer)
         
         # request top-k results (use configured top_k)
         results, scores = self.retriever.retrieve(query_tokens, k=self.top_k)
